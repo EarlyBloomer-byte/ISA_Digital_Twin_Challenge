@@ -1,0 +1,12 @@
+services:
+  routetwin:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      ROUTETWIN_MODE: simulation        # simulation | hybrid | live
+      ROUTETWIN_SEED: "42"
+      # hybrid/live also require: ROUTETWIN_OPERATOR_TOKEN ; live additionally: ROUTETWIN_INGEST_KEY
+      # ROUTETWIN_OPERATOR_TOKEN: change-me
+      # ROUTETWIN_INGEST_KEY: change-me-too
+    volumes:
+      - ./data:/app/data

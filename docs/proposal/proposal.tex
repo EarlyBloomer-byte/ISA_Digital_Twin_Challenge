@@ -1,0 +1,345 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{microtype}
+\usepackage{booktabs,tabularx,longtable,array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{4pt}
+\emergencystretch=2em
+\setlength{\parindent}{0pt}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\definecolor{note}{RGB}{110,110,110}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{\textbf{RouteTwin NG}\\[2pt]\large A standards-led digital twin of a smart road: pavement health, traffic state\\and maintenance decisions for the Lagos--Ibadan expressway}
+\author{[Full name]\\ Department of Mechatronics Engineering, Federal University Oye-Ekiti, Nigeria\\ \texttt{[email]} \quad Student ID: [number]}
+\date{ISA Nigeria Section Next-Gen Automation Challenge --- Proposal, November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Heavy freight is the main structural load on Nigeria's expressways, yet road owners have little continuous knowledge of how much damage each pavement section is accumulating, where a pothole has formed, or where a queue is building. RouteTwin NG is a digital twin of a smart road: thirteen instrumented segments of the Lagos--Ibadan expressway whose pavement condition, remaining life and traffic state are estimated continuously from roadside stations (traffic, weigh-in-motion axle loads, pavement temperature) and roughness readings from passing instrumented trucks. A per-segment extended Kalman filter fuses a load-driven damage model with roughness observations and learns each segment's structural weakness; alarms follow ISA-18.2; the operator display follows ISA-101 principles; telemetry follows IEC 62443 foundational requirements. A complete working prototype (software, simulator, interactive 3D dashboard, 46 automated tests) accompanies this proposal. \textbf{All results here are simulation results.} They verify that the twin implements its models correctly; they do not demonstrate agreement with real Nigerian pavements, and the proposal says exactly what field work would be needed to show that.
+\end{abstract}
+
+\section*{Evidence statement}
+Every quantitative result in this document carries a label.
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+Label & Meaning\\
+\midrule
+\textbf{Verified} & Checked by an automated test or script in the repository, against analytic properties or a hidden simulated ground truth.\\
+\textbf{Simulated} & Produced by the seeded simulator with illustrative parameters; indicates behaviour of the design, not of real roads.\\
+\textbf{Planned} & Would be measured in the field pilot of Section~\ref{sec:workability}. \textbf{No field measurements exist yet.}\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%==========================================================================
+\section{The problem}
+\subsection{Industry, process and affected asset}
+\textbf{Industry:} road freight and transport infrastructure. \textbf{Process:} the movement of goods along the Lagos--Ibadan expressway, one of the country's principal corridors out of the Lagos ports region, and the maintenance of the pavement that carries it. \textbf{Asset:} the pavement itself, treated as thirteen segments of 4.9 to 14.5 km with two or three lanes per direction.
+
+Pavement damage is driven by heavy axles, and the relationship is steep: by the AASHTO fourth-power approximation, damage per pass grows with the fourth power of axle load. Studies on Nigerian roads report severe overstress. An axle-load survey by the Nigerian Building and Road Research Institute on the Gombe--Numan expressway found the pavement loaded to about five times the 80~kN standard axle, and recommended weigh-in-motion stations and routine axle-load surveys \cite{nbrri}. Work on goods haulage in Nigeria likewise stresses the need for strict control of truck loads \cite{oguntayo}, and international evidence shows overloaded vehicles raise pavement damage and life-cycle cost relative to legal loads \cite{pais}. Trade press describes the Apapa--Oshodi expressway, the main route into the ports, as having virtually collapsed through ageing, neglect and heavy trucks \cite{shippingposition}. These sources are not measurements of the Lagos--Ibadan expressway; corridor-specific load and condition data were not found in public sources and would be the first output of the pilot.
+
+\subsection{Present limitations}
+\begin{itemize}
+\item Condition is known only from occasional surveys, so deterioration between surveys, newly formed potholes and the effect of an overloading surge are invisible until a visible failure.
+\item Maintenance is scheduled by calendar or after failure, not by condition and remaining life.
+\item Slow or blocked sections are discovered by drivers, not by the road operator, so advice to incoming trucks comes late.
+\item Public data feeds relevant to the corridor (traffic, road-condition layers, observatory and weather services) were assessed by the project team as unavailable or too sparse for this corridor. This assessment was not an exhaustive access audit, so the design treats external feeds as optional and defines one data contract through which any of them could be connected.
+\end{itemize}
+
+\subsection{Measurable objectives}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l X L{5.6cm}@{}}
+\toprule
+Objective & Measure & Status\\
+\midrule
+O1 & Estimate segment condition index (CI) continuously with small error against hidden truth & Verified in simulation: mean absolute CI error 0.2 to 0.4 points\\
+O2 & Detect and locate potholes from roughness probes without false entries & Verified in simulation: registry matched ground truth in all 13 segments over 30 days\\
+O3 & Detect severe congestion (below 10 km/h) and closures, and issue alarms that respect ISA-18.2 design rules & Verified: alarm tests; incident scenarios raise, suppress and clear alarms\\
+O4 & Reduce time spent below CI 45 and open-pothole time at equal maintenance budget, relative to calendar maintenance & Simulated; see Section~\ref{sec:results}\\
+O5 & Demonstrate each of O1 to O3 on field data from a three-station pilot & Planned\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%==========================================================================
+\section{The digital twin}
+\subsection{Physical counterpart and data sources}
+The physical counterpart is a pavement segment with a roadside station, plus the vehicles that cross it.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{3.1cm} X L{3.5cm}@{}}
+\toprule
+Source & Measured quantities & Used for\\
+\midrule
+Roadside station (per segment) & Vehicle and truck counts, mean speed, weigh-in-motion axle loads (reported as ESAL per truck and mean gross weight), pavement temperature & Damage prediction, traffic state, overload detection\\
+Instrumented trucks as mobile sensors & IMU-derived roughness (IRI) per segment, impact events with position within the segment & State correction, pothole detection\\
+Weather & Rain rate, air temperature & Moisture state of the pavement, speed and capacity effects\\
+Incident reports & Closure, accident, breakdown, flood & Alarms, advice\\
+Work orders & Patch or resurfacing completed on a segment & Reset of the twin state\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Model}
+\textbf{Load.} Equivalent standard axle loads per truck pass are the sum over the steer, drive-tandem and trailer-tandem groups of $(P_g/P_{\mathrm{ref},g})^4$, with $P_{\mathrm{ref}}=80$~kN for a single axle and 148~kN for a tandem.
+
+\textbf{Damage.} Per measurement window the nominal damage increment is
+\begin{equation}
+u=\frac{N_{\mathrm{ESAL}}\;f_T(T)\;f_W(w)}{N_{\mathrm{design}}},\qquad D_{k+1}=D_k+\theta\,u,
+\end{equation}
+with a temperature factor $f_T$ (damage rate doubling per $+15\,^\circ$C above $30\,^\circ$C, clipped) and a moisture factor $f_W=1+w$ where $w\in[0,1]$ is a wetness state driven by rainfall. $\theta$ is a per-segment load-response multiplier that is unknown a priori. Condition index and roughness follow
+\begin{equation}
+\mathrm{CI}=100\,(1-D^{\beta}),\qquad \mathrm{IRI}=1.5+7\,D^{\beta}\ \ [\mathrm{m/km}],\quad \beta=1.3 .
+\end{equation}
+Remaining life is the time for the estimated $D$ to reach the critical condition index of 45 at the current damage rate $\hat\theta\,\bar u$.
+
+\textbf{Traffic.} The simulator uses a cell-transmission model with fundamental-diagram parameters per segment; the twin estimates speed by exponential smoothing of station readings and classifies segments as flowing, slow (below 30~km/h) or severe (below 10~km/h, or closed).
+
+\subsection{Update method}
+Per segment an extended Kalman filter holds the state $(D,\theta)$. Station data drive the predict step through $u$. Each roughness observation $z$ drives the update step with measurement model $h(D)=\mathrm{IRI}(D)$ and noise $\sigma=0.6$~m/km; gross outliers (beyond four innovation standard deviations) are rejected unless they persist. Because $D$ drifts at a rate set by $\theta$, the filter learns each segment's weakness over time (slowly: $\hat\theta$ had not fully converged after 30 simulated days, while the condition index had). Impact events are merged by position into pothole candidates, and a candidate is confirmed only if it is hit repeatedly and on a sufficient fraction of passes; this removed all false entries in simulation. A completed work order resets the state of the segment.
+
+\subsection{Decisions supported}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{4cm} X@{}}
+\toprule
+Decision & Twin output\\
+\midrule
+When and how to maintain & Ranked queue (patch or resurface) from condition, confirmed potholes and remaining life; relative cost 1 for a patch, 12 for resurfacing\\
+Where to send a patching crew & Coordinates of each confirmed pothole\\
+Whether to reroute or hold incoming heavy vehicles & Per-segment advice when a segment is slow or closed, comparing the delay with a defined bypass\\
+Whether to act on overloading & Sustained high ESAL per truck at a station raises an enforcement alert\\
+\bottomrule
+\end{tabularx}
+\end{center}
+The twin models the road. Advice is addressed to the road's users, not to individual vehicles, and the system does not monitor vehicle health.
+
+%==========================================================================
+\section{The software}
+\subsection{Architecture}
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=6mm and 9mm,
+  box/.style={draw,rounded corners=2pt,align=center,minimum height=9mm,inner sep=3pt,font=\footnotesize},
+  arr/.style={-{Stealth[length=2mm]},thick}]
+\node[box] (sim) {Simulator\\(hidden truth)};
+\node[box,below=of sim] (wx) {Recorded real\\weather};
+\node[box,below=of wx] (live) {Signed\\\code{POST /api/ingest}};
+\node[box,right=14mm of wx,minimum width=26mm] (con) {Normalized\\data contracts};
+\node[box,right=12mm of con,minimum width=36mm] (eng) {Twin engine\\EKF per segment\\persistence filter\\ISA-18.2 alarms\\advice, maintenance queue};
+\node[box,right=12mm of eng] (api) {REST and\\WebSocket};
+\node[box,right=10mm of api] (ui) {3D\\dashboard};
+\draw[arr] (sim) -- (con); \draw[arr] (wx) -- (con); \draw[arr] (live) -- (con);
+\draw[arr] (con) -- (eng); \draw[arr] (eng) -- (api); \draw[arr] (api) -- (ui);
+\end{tikzpicture}
+\caption{Data flow. The simulator and hybrid weather feed the same contracts as live devices.}
+\end{figure}
+
+The twin engine only ever sees six typed message contracts (\code{segment\_obs}, \code{probe\_obs}, \code{vehicle\_pos}, \code{weather\_obs}, \code{incident}, \code{maintenance}). Changing the data mode never changes twin logic.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l L{5.2cm} X@{}}
+\toprule
+Mode & Data & Status\\
+\midrule
+Simulation & Seeded simulator, fully reproducible & Implemented, used for all results\\
+Hybrid & Simulated traffic and pavement driven by a recorded real hourly weather series & Implemented; needs one recording run with internet access (not exercised against the live weather service during development)\\
+Live & Devices post HMAC-signed batches & Implemented and tested with synthetic signed messages only\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Tools, interfaces, licences and deployment}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{3.3cm} L{2.4cm} X@{}}
+\toprule
+Component & Licence & Role\\
+\midrule
+Python 3.12 & PSF & Language\\
+NumPy, SciPy & BSD-3 & Numerics, golden-car roughness computation\\
+FastAPI, Uvicorn & MIT, BSD-3 & REST, WebSocket, static hosting\\
+Pydantic v2 & MIT & Typed data contracts and validation\\
+Three.js (vendored) & MIT & 3D corridor view, no build step, no CDN\\
+pytest, httpx & MIT, BSD-3 & Tests\\
+\bottomrule
+\end{tabularx}
+\end{center}
+Interfaces: REST (\code{/api/state}, \code{/api/segment/\{id\}/history}, operator actions), a twice-per-second WebSocket stream, and signed ingestion. Deployment needs one small server (the prototype runs on a laptop; a container image is provided) with an outbound-only network path from stations. All software used is free of licence cost.
+
+\subsection{Dashboard}
+The dashboard is a 3D replica of the corridor with a segment list, alarm list with acknowledgement, reroute advice, maintenance queue with work orders, and a per-segment panel with a condition history chart that can overlay simulator ground truth. Colour is reserved for abnormal conditions (ISA-101). Road width is exaggerated in the 3D view for visibility.
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/dashboard_condition.png}
+\caption{Condition layer: critical segments in red, declining in amber, normal in neutral grey. Simulated data.}
+\end{figure}
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/dashboard_closure.png}
+\caption{Traffic layer during an injected 12-hour closure of segment S08: queues spill back, severe-congestion alarms are raised, spillback near the blocked segment is suppressed by design. Simulated data.}
+\end{figure}
+
+%==========================================================================
+\section{Practical workability}\label{sec:workability}
+\subsection{Equipment for a three-station pilot}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{5.4cm} c r X@{}}
+\toprule
+Item & Qty & USD (assumed) & Note\\
+\midrule
+Weigh-in-motion and classification station, installed & 3 & 135\,000 & Planning allowance of 45\,000 each\\
+Pavement temperature probe, edge gateway, solar and battery, cellular link & 3 & 18\,000 & Planning allowance of 6\,000 each\\
+Reference profilometer survey (two campaigns) & 2 & 10\,000 & Contracted\\
+Static axle-scale check of WIM stations & 1 & 3\,000 & Contracted\\
+Hosting for 12 months & 1 & 1\,200 & Small cloud server\\
+\midrule
+Total (hardware and services) & & 167\,200 & $\pm$50\%\\
+\bottomrule
+\end{tabularx}
+\end{center}
+\textbf{These unit costs are planning assumptions, not vendor quotations}, and must be replaced by quotations before any commitment. Engineering and calibration labour is provided by the project team and is not costed. Instrumented probe trucks need one IMU logger each, or phone-based loggers for early trials. Cheaper first steps exist: reuse of data from existing weighbridges, and manual traffic counts.
+
+\subsection{Implementation steps and schedule}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{2.2cm} L{2.6cm} X@{}}
+\toprule
+Phase & Months & Work\\
+\midrule
+0 & Complete & Prototype, simulator, dashboard, tests\\
+1 & 1--2 & Approach the road owner and operators, agree pilot sites, confirm data-access and security requirements, request quotations\\
+2 & 3--5 & Procure and install three stations (one at a bottleneck, one on a worn section, one on a good section); commission links\\
+3 & 6--8 & Shadow-mode operation; calibrate $N_{\mathrm{design}}$, $f_T$, $f_W$, $\beta$ and traffic parameters against measurements\\
+4 & 9--14 & Validation across a rainy season against profilometer surveys and static scale checks; acceptance gate\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Risks}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{4.2cm} X@{}}
+\toprule
+Risk & Mitigation\\
+\midrule
+Model constants do not match real pavements & Phase 3 calibration; the filter learns $\theta$ per segment; results are labelled simulated until then\\
+Sensor accuracy affected by temperature and speed & Static scale checks; accuracy class declared with the WIM specification used; stale-data alarm suppresses dependent alarms\\
+Site access, theft and vandalism & Roadside cabinets with the road operator's agreement; solar kit hardening; remote health alarms\\
+Power and connectivity outages & Edge buffering and batch upload; replay protection tolerates delayed batches within the freshness window\\
+Cyber risk to telemetry & Signed batches, operator tokens, audit log, refusal to start unsecured (Section~\ref{sec:standards})\\
+Alarm overload during major events & Priorities, deadbands, on-delays, suppression by design, flood monitoring\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Testing plan}
+\begin{enumerate}
+\item \textbf{Software verification (done).} 46 automated tests: load equivalency, roughness computation, estimator convergence and outlier rejection, alarm lifecycle, contract validation, signature and replay checks, API behaviour, determinism, scenario responses.
+\item \textbf{Simulated scenarios (done).} Closure, accident, overloading surge, heavy rain, sensor outage, maintenance, each checked for the expected alarms and state.
+\item \textbf{Bench tests (planned).} Station sensors and gateway against reference instruments before installation.
+\item \textbf{Field validation (planned).} Targets to be fixed with the road owner, proposed as: mean absolute roughness error below 0.7 m/km against profilometer survey; WIM accuracy within the declared class on static scale checks; severe congestion detected within 20 minutes of onset against manual observation; alarm KPIs within ISA-18.2 guidance (flood events rare, standing alarms under control).
+\end{enumerate}
+Simulated and field results will be stored and reported separately (\code{data/simulated} and \code{data/field} in the repository).
+
+%==========================================================================
+\section{Standards and originality}\label{sec:standards}
+Editions and clause numbers are to be confirmed against the copies held by the project before citation. Where a standard targets another domain the mapping is by analogy and is marked so. No certification is claimed.
+
+\begin{center}
+\scriptsize
+\begin{longtable}{@{}L{2.4cm} L{5.0cm} L{3.9cm} L{3.6cm}@{}}
+\toprule
+Standard & Design choice & Where & Verification evidence\\
+\midrule
+\endhead
+ISA-18.2 & Every alarm has priority, setpoint, deadband, on-delay, consequence and action; lifecycle active-unacknowledged to return-to-normal; informational slow-traffic state is display-only; suppression by design (closure suppresses nearby congestion; critical condition suppresses maintenance-due; stale data suppresses dependent alarms); flood and standing-alarm KPIs & \code{alarms.py}, alarm definitions in \code{twin.py} & Alarm-lifecycle, suppression and flood tests; closure scenario test\\
+ISA-101 & Neutral display, colour reserved for abnormal states, consistent navigation, visible keyboard focus & \code{web/style.css}, \code{web/app.js} & Inspection (no automated test)\\
+ISA/IEC 62443 (3-3) & HMAC-signed telemetry (identification, integrity, replay), operator tokens, strict typed validation, audit log, refusal to start unsecured outside simulation & \code{security.py}, \code{runtime.py}, \code{api.py} & Signature, replay, validation and live-mode API tests\\
+ISA-95 & Work-order completion exchanged as a typed maintenance event; maintenance queue as the interface to an asset system (information-model idea, not B2MML) & \code{contracts.py}, \code{decision.py} & Maintenance reset test\\
+ISO 13374 (analogy) & Acquisition, processing, state detection, health assessment, prognosis, advisory & \code{twin.py}, \code{estimator.py}, \code{decision.py} & Estimator and system tests\\
+ISO 23247 (analogy) & Observable element (segment with station), data collection, twin core, user entity & Architecture, Figure~1 & Design statement\\
+ISO 8608 and IRI (World Bank, ASTM E1926 method) & Golden-car IRI verified on synthetic profiles of known roughness class & \code{iri.py} & Class-ordering and linearity tests; simulated IRI by class: A 2.1, B 4.3, C 8.6, D 17.2 m/km\\
+AASHTO 1993 (method) & Fourth-power load equivalency per axle group & \code{pavement.py} & Fourth-power and overload tests\\
+Nigeria Data Protection Act 2023 & No driver identity needed; vehicle identifiers opaque and optional; retention policy to be set (not yet enforced in code) & Contracts & Design statement\\
+\bottomrule
+\end{longtable}
+\end{center}
+ISA-88 (batch control) and ISA-84 (functional safety) are not relevant: the twin is advisory, has no trip function and does not control a batch process.
+
+\subsection{Original contribution}
+The components (fourth-power load equivalency, Kalman filtering, cell-transmission traffic) are established. The contribution is their integration and treatment as an industrial twin:
+\begin{itemize}
+\item A pavement twin whose update method fuses a load-driven prediction with roughness observations from passing vehicles and learns a per-segment structural multiplier.
+\item A persistence filter that turns noisy impact events into confirmed, located potholes without false entries in simulation.
+\item ISA-18.2 and ISA-101 treatment of an infrastructure twin, including suppression rules for consequential traffic alarms.
+\item One data contract for simulation, hybrid and live modes, with verification against hidden simulated truth and explicit separation of simulated from field evidence.
+\end{itemize}
+I have not carried out a literature search that would justify claiming a first of its kind.
+
+%==========================================================================
+\section{Simulation results}\label{sec:results}
+\textbf{Estimation accuracy (verified, simulated).} Against the hidden truth the twin's mean absolute condition-index error was 0.23 points after 30 simulated days (with the scripted demo storyline) and 0.34 to 0.40 points averaged over the 180-day maintenance runs. The load multiplier $\theta$ was not fully recovered after 30 days. Potholes matched the ground-truth count in every segment.
+
+\textbf{Maintenance policy comparison (simulated).} All policies except ``none'' receive the same budget (12 units per 30 days, accumulating; patch 1, resurface 12), on identical simulated weather, demand and incidents over 180 days, averaged over two seeds. ``Fixed'' resurfaces segments in rotation. ``Inspect'' is an optimistic baseline: perfect knowledge of true condition and potholes every 30 days, at no inspection cost. ``Twin30'' and ``Twin7'' use the twin's estimates and decide every 30 and every 7 days.
+\begin{table}[h]
+\centering\small
+\input{policy_table.tex}
+\caption{Simulated policy comparison. Lower is better except mean CI. Two seeds only: variability across seeds has not been characterised, and results depend on illustrative parameters.}
+\end{table}
+\textbf{How to read this.} The twin performs about as well as an oracle inspection with the same budget and cadence, as it should if its estimates are accurate. Both are far better than calendar rotation, but the fixed baseline cannot patch potholes, so part of that gap comes from baseline design (condition-based targeting and cheap patching) and not from the twin alone. Deciding weekly instead of every 30 days changed little in this simulation: slightly fewer pothole-days, but no gain in segment-days below CI 45. The twin's practical advantage over inspection is that it needs no inspection campaigns, which this simulation prices at zero. Only the field pilot can show whether a real-world gain exists and how large it is.
+
+%==========================================================================
+\section{Limitations}
+\begin{itemize}
+\item No field data: all constants (capacities, design ESAL, damage and speed coefficients, hazard rates, bypass options) are illustrative placeholders and the corridor waypoints are approximate.
+\item The roughness computation omits the standard 250 mm moving-average pre-filter.
+\item The simulator generates pavement truth with the same model family the twin uses, so estimation accuracy shown here is optimistic relative to model mismatch in practice.
+\item Advice in the dashboard is generic to the segment and rests on bypass options that are placeholders.
+\item The weather recording and OpenStreetMap geometry scripts were not run against live services during development.
+\end{itemize}
+
+\appendix
+\section{Mapping to the judging framework}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}L{4.2cm} X@{}}
+\toprule
+Criterion & Where addressed\\
+\midrule
+Problem relevance & Section 1: asset, limitations, measurable objectives, evidence on axle overstress\\
+Technical understanding & Section 2: load, damage, state estimation, traffic, instrumentation and the quantities measured\\
+Innovation & Section 5.1 and the update method of Section 2.3\\
+Feasibility & Section 4: equipment, cost allowances, schedule, risks, pilot; open-source stack\\
+Data and modelling approach & Sections 2.1--2.3, three data modes, simulated-versus-field labelling\\
+Operational value & Section 2.4 and the policy comparison in Section 6\\
+Presentation and communication & Interactive 3D dashboard, evidence statement, this document\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{thebibliography}{9}\small
+\bibitem{nbrri} Nigerian Building and Road Research Institute. \emph{Effect of axle loads on pavement deterioration: a case of Gombe--Numan expressway.} nbrri.gov.ng (accessed 26 October 2026).
+\bibitem{oguntayo} D.~O. Oguntayo, I.~T. Adelowo, J.~K. Olaleye. Measurement of the traffic wheel/pavement contact characteristics for goods haulage; case study of Dangote Flour Mill PLC Ilorin, Nigeria. \emph{Cogent Engineering} 7(1), 2020. doi:10.1080/23311916.2020.1830470.
+\bibitem{pais} J.~C. Pais \emph{et al.} The increase of pavement cost due to the traffic overloads. University of Minho repository record (accessed 26 October 2026).
+\bibitem{shippingposition} ``Apapa--Oshodi Expressway, completed yet impassable.'' Shipping Position, shippingposition.com.ng (accessed 26 October 2026).
+\end{thebibliography}
+\end{document}

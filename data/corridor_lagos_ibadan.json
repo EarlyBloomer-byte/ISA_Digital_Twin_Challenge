@@ -1,0 +1,151 @@
+{
+  "name": "Lagos-Ibadan Expressway (illustrative corridor model)",
+  "geometry_status": "APPROXIMATE waypoints (several km of error possible). Replace with an OSM extraction: python scripts/fetch_osm_corridor.py",
+  "design_esal_millions": 100.0,
+  "waypoints": [
+    {
+      "name": "Ojota",
+      "lat": 6.593,
+      "lon": 3.383
+    },
+    {
+      "name": "Berger",
+      "lat": 6.636,
+      "lon": 3.373
+    },
+    {
+      "lat": 6.675,
+      "lon": 3.395
+    },
+    {
+      "lat": 6.715,
+      "lon": 3.425
+    },
+    {
+      "lat": 6.755,
+      "lon": 3.45
+    },
+    {
+      "lat": 6.8,
+      "lon": 3.465
+    },
+    {
+      "lat": 6.835,
+      "lon": 3.53
+    },
+    {
+      "lat": 6.85,
+      "lon": 3.6
+    },
+    {
+      "name": "Sagamu interchange area",
+      "lat": 6.88,
+      "lon": 3.65
+    },
+    {
+      "lat": 6.95,
+      "lon": 3.685
+    },
+    {
+      "lat": 7.05,
+      "lon": 3.75
+    },
+    {
+      "lat": 7.15,
+      "lon": 3.82
+    },
+    {
+      "lat": 7.26,
+      "lon": 3.88
+    },
+    {
+      "name": "Ibadan",
+      "lat": 7.37,
+      "lon": 3.95
+    }
+  ],
+  "segments": [
+    {
+      "lanes": 3,
+      "free_flow_kmh": 70,
+      "capacity_factor": 0.44
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 70,
+      "capacity_factor": 0.55,
+      "bypass": {
+        "extra_km": 9,
+        "speed_kmh": 35
+      }
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 80,
+      "capacity_factor": 0.8
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 80,
+      "capacity_factor": 0.9
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 90,
+      "capacity_factor": 0.9
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 90,
+      "capacity_factor": 0.7
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 90,
+      "capacity_factor": 1.0
+    },
+    {
+      "lanes": 3,
+      "free_flow_kmh": 90,
+      "capacity_factor": 0.45,
+      "bypass": {
+        "extra_km": 14,
+        "speed_kmh": 40
+      }
+    },
+    {
+      "lanes": 2,
+      "free_flow_kmh": 90,
+      "capacity_factor": 1.0,
+      "bypass": {
+        "extra_km": 10,
+        "speed_kmh": 40
+      }
+    },
+    {
+      "lanes": 2,
+      "free_flow_kmh": 90,
+      "capacity_factor": 1.0
+    },
+    {
+      "lanes": 2,
+      "free_flow_kmh": 90,
+      "capacity_factor": 1.0
+    },
+    {
+      "lanes": 2,
+      "free_flow_kmh": 90,
+      "capacity_factor": 1.0
+    },
+    {
+      "lanes": 2,
+      "free_flow_kmh": 80,
+      "capacity_factor": 1.0,
+      "bypass": {
+        "extra_km": 8,
+        "speed_kmh": 35
+      }
+    }
+  ],
+  "parameter_note": "Lanes, free-flow speeds, capacity factors and bypass options are illustrative placeholders, not surveyed values. Replace with survey data before any real use."
+}

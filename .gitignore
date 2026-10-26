@@ -1,0 +1,48 @@
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs
+*.log
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+
+# Node.js
+node_modules/
+
+*.sqlite3-journal

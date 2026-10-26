@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RouteTwin NG - Lagos-Ibadan corridor twin</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">RouteTwin NG <span class="sub">Lagos-Ibadan corridor</span></div>
+  <div id="modeBadge" class="badge">-</div>
+  <div id="clock" class="clock">-</div>
+  <div class="spacer"></div>
+  <label class="tokenbox" id="tokenBox" hidden>Operator token <input id="token" type="password" autocomplete="off"></label>
+  <button id="btnPause">Pause</button>
+  <select id="speed" aria-label="Simulation speed">
+    <option value="6">1 h per second</option>
+    <option value="36">6 h per second</option>
+    <option value="144">1 day per second</option>
+  </select>
+  <details class="menu" id="scenMenu">
+    <summary>Scenarios</summary>
+    <div class="menu-body">
+      <button data-scn="overload">Overloaded trucks for 7 days</button>
+      <button data-scn="rain">Heavy rain for 24 h</button>
+      <button data-scn="closure-sel">Close selected segment for 4 h</button>
+      <button data-scn="accident-sel">Accident on selected segment (3 h)</button>
+      <button data-scn="outage-sel">Sensor outage on selected segment</button>
+    </div>
+  </details>
+</header>
+
+<div class="banner" id="banner"></div>
+
+<main class="grid">
+  <aside class="left" aria-label="Segments">
+    <h2>Segments</h2>
+    <div id="segList" class="seglist"></div>
+    <div class="legend">
+      <div class="seg-layer" role="group" aria-label="Map layer">
+        <button id="layerCond" class="on">Pavement condition</button>
+        <button id="layerTraf">Traffic</button>
+      </div>
+      <label class="check" id="truthRow" hidden><input type="checkbox" id="truthToggle"> Show simulator ground truth</label>
+      <div class="key" id="key"></div>
+    </div>
+  </aside>
+
+  <section class="stage" aria-label="3D corridor view">
+    <div id="three"></div>
+    <div id="labels"></div>
+    <button id="resetView" class="reset">Reset view</button>
+    <div class="hint">Drag to rotate, scroll to zoom, right-drag to pan. Click a segment to inspect it.</div>
+  </section>
+
+  <aside class="right" aria-label="Operations">
+    <div class="kpis" id="kpis"></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab on" data-tab="alarms">Alarms</button>
+      <button class="tab" data-tab="advisories">Reroute</button>
+      <button class="tab" data-tab="maint">Maintenance</button>
+      <button class="tab" data-tab="detail">Segment</button>
+    </nav>
+    <div id="tab-alarms" class="pane"></div>
+    <div id="tab-advisories" class="pane" hidden></div>
+    <div id="tab-maint" class="pane" hidden></div>
+    <div id="tab-detail" class="pane" hidden></div>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -25,6 +25,8 @@ class PavementEKF:
         self.rejected = 0
         self.consec_rejects = 0
         self.updates = 0
+        self.nis_sum = 0.0   # normalised innovation squared, for filter-consistency checks (expected mean about 1)
+        self.nis_n = 0
 
     def predict(self, u: float):
         d, th = self.x
@@ -39,6 +41,8 @@ class PavementEKF:
         H = np.array([[float(pv.diri_dd(d)), 0.0]])
         S = float((H @ self.P @ H.T)[0, 0]) + self.r
         y = z_iri - h
+        self.nis_sum += y * y / S
+        self.nis_n += 1
         if abs(y) > 4.0 * math.sqrt(S):
             self.rejected += 1
             self.consec_rejects += 1

@@ -2,102 +2,86 @@
 
 A digital twin of a **smart road**: the Lagos-Ibadan expressway modelled as thirteen instrumented segments whose
 pavement condition, traffic state and maintenance needs are estimated continuously from sensor data and acted on
-through alarms, reroute advice and a maintenance queue. Built for the ISA Nigeria Next-Gen Automation Challenge
-(Digital Twin for Industrial Operations).
+through alarms, reroute advice and a maintenance queue. Built for the ISA Nigeria Next-Gen Automation Challenge.
 
-> **Read this first.** Nothing in this repository is field evidence. The sensors, traffic and pavement truth come
-> from a seeded simulator, and every model constant is an illustrative placeholder. What *is* verified is that the
-> twin implements its models correctly: it recovers hidden simulated pavement state, finds simulated potholes, and
-> obeys its alarm and security rules (see `docs/standards_mapping.md` and `pytest`). Matching real Nigerian roads
-> would need calibration data this project does not have.
+> Nothing here is field evidence. Sensors, traffic and pavement truth come from a simulator and every model constant is
+> an illustrative placeholder. What is verified is that the twin implements its models correctly (see `tests/`,
+> `docs/claims.md` and `docs/standards_mapping.md`).
 
-## Run it
+## Run it locally
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate      # optional
 pip install -r requirements.txt
-python -m pytest -q              # 46 tests
-python -m routetwin              # open http://127.0.0.1:8000
+python -m routetwin                                      # then open http://127.0.0.1:8000
 ```
 
-Docker: `docker compose up --build`. Make targets: `make test demo compare`.
+`make run` does the same. `python -m routetwin --demo --seed 42` skips the start dialog and begins the seeded,
+reproducible run with the scripted storyline.
 
-The dashboard shows a 3D corridor (drag, scroll, click a segment), alarms with acknowledgement, reroute advice,
-a ranked maintenance queue with work orders, and a per-segment panel with a condition-index history chart.
-The *Scenarios* menu injects closures, accidents, overloaded trucks, heavy rain and sensor outages.
-Tick *Show simulator ground truth* to overlay the hidden truth on the chart and the 3D view.
+On first load a dialog asks which scenarios to run: up to three together (heavy rain, overloaded trucks, traffic surge,
+road closure, accident, sensor outage), or none. **Pause** freezes the run. **Stop** discards it (after a confirmation)
+and returns to the dialog for a fresh one. The speed menu has ten rates, from 10 simulated minutes per second to 2 days
+per second. Every run starts from a new random road, so the worn sections and potholes differ each time; the run's seed is
+shown under the header, and typing it into the dialog repeats that run. Scenarios can also be added during a run while
+fewer than three are active.
 
 ## What is being twinned
 
 | Physical asset | Sensors (simulated) | Model | Decisions supported |
 |---|---|---|---|
-| A pavement segment (4.9 to 14.5 km, 2 or 3 lanes per direction) | Roadside station per segment: vehicle count, truck count, mean speed, weigh-in-motion ESAL per truck, pavement temperature. Roughness observations from passing instrumented trucks (IMU-derived IRI and impact events) | Load-driven damage (fourth-power ESAL law with temperature and moisture factors), condition index, IRI, remaining life; cell-transmission traffic model in the simulator | Maintenance timing and type (patch or resurface), reroute or hold advice, overload enforcement alerts, pothole dispatch with coordinates |
+| A pavement segment (4.9 to 14.5 km, 2 or 3 lanes per direction) | Roadside station per segment: counts, mean speed, weigh-in-motion ESAL per truck, pavement temperature; roughness readings from passing instrumented trucks | Load-driven damage (fourth-power ESAL law with temperature and moisture factors), condition index, IRI, remaining life | Maintenance timing and type, reroute or hold advice, overload alerts, pothole dispatch with coordinates |
 
-Trucks appear in the dashboard as traffic and as mobile roughness probes. The project does not model fleets or
-vehicle health.
+Trucks appear as traffic and as mobile roughness probes. The project does not model fleets or vehicle health. Flow
+figures are hourly rates per direction. The demand profile peaks near 3,500 veh/h per direction and implies roughly
+75,000 vehicles a day across both directions, which is an uncalibrated assumption.
 
-## Architecture
+## Architecture and data modes
 
 ```
  simulation: World (hidden truth) ┐
  hybrid:     World + recorded     ├─> normalized contracts ─> TwinEngine ─> snapshot ─> REST / WebSocket ─> 3D dashboard
-             real weather         │   (routetwin/contracts.py)    │  EKF per segment      
+             real weather         │   (routetwin/contracts.py)    │  Kalman filter per segment
  live:       signed POST /ingest  ┘                               │  persistence filter (potholes)
                                                                   │  ISA-18.2 alarm manager
                                                                   └─ decisions: reroute advice, maintenance queue
 ```
 
-The twin engine consumes only contract messages (`segment_obs`, `probe_obs`, `vehicle_pos`, `weather_obs`,
-`incident`, `maintenance`). Changing the data mode never touches twin logic.
+| Mode | Source | Needs |
+|---|---|---|
+| `simulation` (default) | Seeded or random simulator | Nothing |
+| `hybrid` | Simulated traffic and pavement driven by a recorded real hourly weather series | `make record-weather` once, with internet |
+| `live` | Devices post HMAC-signed batches to `/api/ingest` | `ROUTETWIN_OPERATOR_TOKEN`, `ROUTETWIN_INGEST_KEY` |
 
-**How the twin stays in sync.** Per segment, an extended Kalman filter holds damage `D` and a load-response
-multiplier `theta`. Traffic measurements drive the *predict* step (`D += theta * u`, with `u = ESAL x temperature
-factor x moisture factor / design ESAL`). Roughness observations drive the *update* step. Because `D` drifts at a
-rate set by `theta`, the filter also learns each segment's structural weakness over weeks (convergence is slow: in
-30 simulated days the condition index is within about 0.3 points of truth, while `theta` has not fully converged).
-Potholes use a persistence filter: a real pothole is hit on most passes, spurious impacts are not.
+The twin engine only sees six typed message contracts, so changing the data mode never touches twin logic. Hybrid and live
+modes require an operator token (the server refuses to start without one); see `scripts/live_client_example.py`.
 
-## Data modes
-
-| Mode | Source | Reproducible | Needs |
-|---|---|---|---|
-| `simulation` | Seeded simulator | Yes | Nothing |
-| `hybrid` | Simulated traffic and pavement driven by a **recorded real hourly weather series** (Open-Meteo) | Yes, after recording | Run `make record-weather` once with internet. Refuses to start otherwise |
-| `live` | Devices post HMAC-signed batches to `/api/ingest` | No | `ROUTETWIN_OPERATOR_TOKEN`, `ROUTETWIN_INGEST_KEY` |
-
-`scripts/live_client_example.py` shows the signing. Other public sources (FRSC observatory, FERMA GIS, TomTom,
-NiMet) were not found usable for this corridor, so no adapters are claimed for them; the contract is the integration
-point if access is obtained.
-
-## Repository layout
+## Layout
 
 ```
-routetwin/    contracts, corridor, pavement, iri, estimator, twin, alarms, decision, simulator, weather,
-              runtime, security, api, geometry_osm
-web/          dashboard (Three.js vendored in web/vendor, no build step, no CDN)
-scripts/      compare_policies, record_weather, fetch_osm_corridor, live_client_example
-data/         corridor definition; simulated/ and field/ are kept separate
-docs/         standards_mapping.md, results.md
-tests/        46 tests
+routetwin/    contracts, corridor, pavement, iri, estimator, twin, alarms, decision, simulator, weather, runtime, security, api
+web/          dashboard (Three.js is included, no build step, no network access at run time)
+scripts/      compare_policies, validate_estimator, headline_accuracy, record_weather, fetch_osm_corridor, live_client_example
+data/         corridor definition; simulated/ and field/ outputs, kept separate
+docs/         claims.md, standards_mapping.md, results.md, validation.md, proposal/ (LaTeX source and PDF)
+tests/        61 tests (make test)
 ```
 
 ## API
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/state?truth=true` | Twin snapshot (truth only in modes with a simulated world) |
-| `GET /api/config`, `GET /api/segment/{id}/history` | Corridor and condition history |
-| `POST /api/control`, `/api/scenario`, `/api/workorder`, `/api/alarms/{id}/ack`, `/api/alarms/ack_all` | Operator actions (token required outside simulation mode) |
-| `POST /api/ingest` | Signed telemetry, live mode only |
-| `WS /ws` | Snapshot stream, twice a second |
+`GET /api/state`, `/api/config`, `/api/segment/{id}/history`; operator actions `POST /api/run/start`, `/api/run/stop`,
+`/api/control`, `/api/scenario`, `/api/workorder`, `/api/alarms/{id}/ack`; signed `POST /api/ingest` (live only);
+`WS /ws` (four updates a second).
+
+## Studies behind the proposal
+
+`make compare` (maintenance policies), `make validate` (filter consistency and model mismatch), `make headline` (30-day
+accuracy). Results are written to `data/simulated/` and summarised in `docs/results.md` and `docs/validation.md`. They use
+the seeded default simulator, not the randomised dashboard runs.
 
 ## Known limitations
 
-* All constants (capacities, design ESAL, damage and speed coefficients, hazard rates, bypass options) are
-  illustrative. The corridor waypoints are approximate; `make osm` can rebuild them from OpenStreetMap.
-* The IRI implementation omits the standard 250 mm moving-average pre-filter.
-* Open-Meteo and Overpass scripts were written to the public API descriptions but were not run against the live
-  services during development.
-* The dashboard was developed without an automated browser test; the JavaScript was syntax-checked and the
-  served API tested, but visual behaviour should be checked in a browser before a demo.
-* Simulation uses accelerated, seeded scenarios; see `docs/results.md` for how results should be quoted.
+* All constants are illustrative placeholders; corridor waypoints are approximate (`make osm` rebuilds them from OpenStreetMap).
+* The IRI implementation omits the 250 mm moving-average pre-filter.
+* The weather-recording and OpenStreetMap scripts were written to the public API descriptions but not run live.
+* The dashboard was checked in headless Chromium with software rendering, not on a physical GPU.

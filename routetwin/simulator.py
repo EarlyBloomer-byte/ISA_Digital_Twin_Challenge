@@ -19,6 +19,10 @@ from .contracts import (IncidentReport, MaintenanceEvent, ProbeObservation, Segm
 from .corridor import Corridor
 from .weather import InternalWeather
 
+MAX_SCENARIOS = 3
+SEGMENT_KINDS = ("closure", "accident", "sensor_outage")
+SCENARIO_LABELS = {"rain": "Heavy rain", "overload": "Overloaded trucks", "surge": "Traffic surge",
+                   "closure": "Road closure", "accident": "Accident", "sensor_outage": "Sensor outage"}
 KJ_PER_LANE = 110.0        # jam density, veh/km/lane (illustrative)
 CAP_PER_LANE = 1800.0      # veh/h/lane (illustrative)
 DESIGN_YEARS = 8.0
@@ -39,6 +43,12 @@ class SimConfig:
     pothole_false_p: float = 0.02
     random_incidents: bool = True
     demo_script: bool = False
+    # Optional model mismatch for validation runs (defaults leave the truth model identical to the twin's)
+    initial_potholes: bool = False   # worn sections start with potholes already present (dashboard runs)
+    wear_range: tuple = (0.25, 0.85)  # range of the initial damage of each segment
+    damage_exponent: float = 4.0     # true load-damage exponent (the twin and the WIM stations assume 4)
+    iri_beta: float | None = None    # true IRI(D) exponent (twin assumes 1.3)
+    iri_span: float | None = None    # true IRI(D) span in m/km (twin assumes 7)
 
 
 def _diurnal(hour: float, d: int) -> float:
@@ -70,9 +80,15 @@ class World:
         self.n_veh = np.zeros((2, n))
         self.n_veh[:] = 0.02 * self.kj * self.L
         # hidden pavement truth
-        self.D = self.rng_pav.uniform(0.25, 0.85, n)
+        self.D = self.rng_pav.uniform(c.wear_range[0], c.wear_range[1], n)
         self.theta = np.exp(self.rng_pav.normal(0.0, 0.35, n))
         self.potholes: list[list[float]] = [[] for _ in range(n)]
+        if c.initial_potholes:  # a worn road already has potholes: expected number grows with wear and segment length
+            ci0 = pv.condition_index(self.D)
+            for i in range(n):
+                if ci0[i] < 65.0:
+                    k = int(self.rng_pav.poisson(2.5 * ((65.0 - ci0[i]) / 65.0) ** 2 * (self.L[i] / 8.0)))
+                    self.potholes[i] = [float(x) for x in self.rng_pav.uniform(0, self.L[i] * 1000.0, k)]
         self.wet = 0.0
         # incidents: capacity multiplier and remaining ticks per (dir, segment)
         self.inc_factor = np.ones((2, n))
@@ -82,6 +98,10 @@ class World:
         self.sensor_out_left = np.zeros(n, dtype=int)
         self.overload_mult = 1.0
         self.overload_until = -1.0
+        self.surge = 1.0
+        self.surge_until = -1.0
+        self.scen: list[dict] = []
+        self._sid = 1
         self.ts = 0.0
         self.tick = 0
         self.rain = 0.0
@@ -131,6 +151,9 @@ class World:
             self.inc_factor[d, sid] = 0.25
             self.inc_left[d, sid] = int(kw.get("hours", 3) * 3600 / self.cfg.tick_s)
             self.inc_kind[(d, sid)] = "accident"
+            self.inc_reported[d, sid] = True
+            self._pending_reports.append(IncidentReport(
+                ts=self.ts, source="sim_report", segment_id=sid, kind="accident", severity=0.75, active=True))
         elif kind == "overload":
             self.overload_mult = float(kw.get("mult", 1.3))
             self.overload_until = self.ts + float(kw.get("days", 7)) * 86400.0
@@ -140,6 +163,49 @@ class World:
             self.sensor_out_left[int(kw["segment_id"])] = int(kw.get("ticks", 60))
         else:
             raise ValueError(f"unknown scenario '{kind}'")
+
+    # ---------------------------------------------------------------- operator scenarios (at most three at once)
+    def active_scenarios(self) -> list[dict]:
+        return [x for x in self.scen if x["end"] > self.ts]
+
+    def scenario_status(self) -> list[dict]:
+        return [{"id": x["id"], "kind": x["kind"], "label": x["label"], "remaining_h": (x["end"] - self.ts) / 3600.0}
+                for x in self.active_scenarios()]
+
+    def add_scenario(self, kind: str, **kw):
+        """Start a scenario with sensible defaults. At most MAX_SCENARIOS may be active; the same kind cannot repeat."""
+        if kind not in SCENARIO_LABELS:
+            raise ValueError("Unknown scenario")
+        act = self.active_scenarios()
+        if len(act) >= MAX_SCENARIOS:
+            raise ValueError("A maximum of three scenarios can be active at once")
+        if any(x["kind"] == kind for x in act):
+            raise ValueError(f"{SCENARIO_LABELS[kind]} is already active")
+        if kind == "rain" and not isinstance(self.weather, InternalWeather):
+            raise ValueError("Rain is driven by recorded weather in hybrid mode")
+        n, ts, tick = self.cor.n, self.ts, self.cfg.tick_s
+        seg = None
+        if kind in SEGMENT_KINDS:
+            sid = kw.get("segment_id")
+            seg = int(self.rng_env.integers(0, n)) if sid in (None, "random") else int(sid)
+            if not 0 <= seg < n:
+                raise ValueError("Unknown segment")
+        if kind == "closure":
+            hours = float(kw.get("hours") or 12); self.trigger("closure", segment_id=seg, hours=hours); end = ts + hours * 3600
+        elif kind == "accident":
+            d = kw.get("direction"); d = int(self.rng_env.integers(0, 2)) if d is None else int(d)
+            hours = float(kw.get("hours") or 3); self.trigger("accident", segment_id=seg, direction=d, hours=hours); end = ts + hours * 3600
+        elif kind == "overload":
+            self.trigger("overload", mult=float(kw.get("mult") or 1.35), days=float(kw.get("days") or 7)); end = self.overload_until
+        elif kind == "surge":
+            self.surge = float(kw.get("mult") or 1.3); end = self.surge_until = ts + float(kw.get("days") or 3) * 86400.0
+        elif kind == "rain":
+            hours = float(kw.get("hours") or 72); self.trigger("rain", hours=hours, intensity=float(kw.get("intensity") or 8.0)); end = ts + hours * 3600
+        else:
+            ticks = int(round(float(kw.get("hours") or 15) * 3600 / tick)); self.trigger("sensor_outage", segment_id=seg, ticks=ticks); end = ts + ticks * tick
+        label = SCENARIO_LABELS[kind] + (f" \u00b7 S{seg + 1:02d}" if seg is not None else "")
+        self.scen.append({"id": self._sid, "kind": kind, "label": label, "end": end})
+        self._sid += 1
 
     # ---------------------------------------------------------------- maintenance
     def apply_maintenance(self, seg_id: int, action: str):
@@ -181,6 +247,8 @@ class World:
             self.trigger(kind, **kw)
         if self.overload_mult != 1.0 and self.ts > self.overload_until:
             self.overload_mult = 1.0
+        if self.surge != 1.0 and self.ts > self.surge_until:
+            self.surge = 1.0
 
         # weather and wetness
         self.rain, self.air = self.weather.at(self.ts)
@@ -225,7 +293,7 @@ class World:
                 S = np.minimum(vf * self.n_veh[d] / self.L, Q)
                 wv = Q / np.maximum(self.kj - Q / vf, 1e-6)
                 R = np.minimum(Q, wv * (self.kj * self.L - self.n_veh[d]) / self.L)
-                demand = c.demand_peak_vph * _diurnal(hour, d) * (1 + 0.05 * self.rng_env.standard_normal())
+                demand = c.demand_peak_vph * _diurnal(hour, d) * self.surge * (1 + 0.05 * self.rng_env.standard_normal())
                 out = np.empty(n)
                 inflow = np.empty(n)
                 if d == 0:
@@ -249,7 +317,12 @@ class World:
                        self.rng_pav.normal(16, 3, (2, n, m))).clip(8, 75)
         esal_mean = pv.esal_per_truck(gvw).mean(axis=2)
         gvw_mean = gvw.mean(axis=2)
-        esal_tick = (trucks * esal_mean).sum(axis=0)
+        if c.damage_exponent != 4.0:
+            norm = float(pv.esal_per_truck(34.0)) / float(pv.esal_per_truck_p(34.0, c.damage_exponent))
+            esal_dmg = pv.esal_per_truck_p(gvw, c.damage_exponent).mean(axis=2) * norm
+        else:
+            esal_dmg = esal_mean
+        esal_tick = (trucks * esal_dmg).sum(axis=0)
         u = esal_tick * pv.temp_factor(pav_temp) * pv.wet_factor(self.wet) / self.cor.design_esal
         self.D = self.D + self.theta * u
 
@@ -316,9 +389,17 @@ class World:
         msgs.extend(pos_msgs)
         return msgs
 
+    def _iri_true(self, d) -> float:
+        c = self.cfg
+        if c.iri_beta is None and c.iri_span is None:
+            return float(pv.iri_from_damage(d))
+        beta = c.iri_beta if c.iri_beta is not None else pv.BETA
+        span = c.iri_span if c.iri_span is not None else pv.IRI_SPAN
+        return float(pv.IRI_NEW + span * min(max(d, 0.0), 1.35) ** beta)
+
     def _probe(self, i: int, sid: int, v: float) -> ProbeObservation:
         c, rng = self.cfg, self.rng_obs
-        iri = float(pv.iri_from_damage(self.D[sid])) + self.f_bias[i] + c.probe_sigma * rng.standard_normal()
+        iri = self._iri_true(self.D[sid]) + self.f_bias[i] + c.probe_sigma * rng.standard_normal()
         impacts = [p + float(rng.normal(0, 15)) for p in self.potholes[sid] if rng.random() < c.pothole_detect_p]
         if rng.random() < c.pothole_false_p:
             impacts.append(float(rng.uniform(0, self.L[sid] * 1000.0)))

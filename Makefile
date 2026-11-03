@@ -1,23 +1,31 @@
-.PHONY: install test demo hybrid compare record-weather osm
-PY ?= python3
+.PHONY: install run demo test hybrid compare validate headline record-weather osm
 
-install:
-	$(PY) -m pip install -r requirements.txt
+install:         ## Python dependencies
+	python3 -m pip install -r requirements.txt
+
+run:             ## launch the dashboard: http://127.0.0.1:8000
+	python3 -m routetwin
+
+demo:            ## seeded, reproducible run with the scripted storyline, started immediately
+	python3 -m routetwin --demo --seed 42
 
 test:
-	$(PY) -m pytest -q
-
-demo:            ## deterministic simulation mode with the scripted storyline, http://127.0.0.1:8000
-	$(PY) -m routetwin --mode simulation --seed 42
+	python3 -m pytest -q
 
 hybrid:          ## real recorded weather + simulated pavement/traffic (run record-weather first)
-	ROUTETWIN_OPERATOR_TOKEN=$${ROUTETWIN_OPERATOR_TOKEN:-demo-token} $(PY) -m routetwin --mode hybrid
+	ROUTETWIN_OPERATOR_TOKEN=$${ROUTETWIN_OPERATOR_TOKEN:-demo-token} python3 -m routetwin --mode hybrid
 
 compare:         ## maintenance policy comparison on identical simulated environments
-	$(PY) scripts/compare_policies.py --days 180 --seeds 3
+	python3 scripts/compare_policies.py --days 180 --seeds 3
+
+validate:        ## estimator validation: filter consistency and model mismatch (about 3 minutes)
+	python3 scripts/validate_estimator.py --days 60 --seeds 3
+
+headline:        ## the 30-day demonstration figures quoted in the proposal
+	python3 scripts/headline_accuracy.py
 
 record-weather:  ## needs internet
-	$(PY) scripts/record_weather.py 60
+	python3 scripts/record_weather.py 60
 
 osm:             ## needs internet
-	$(PY) scripts/fetch_osm_corridor.py
+	python3 scripts/fetch_osm_corridor.py

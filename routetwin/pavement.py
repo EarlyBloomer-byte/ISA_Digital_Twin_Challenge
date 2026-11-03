@@ -19,12 +19,17 @@ IRI_NEW = 1.5      # m/km, new pavement
 IRI_SPAN = 7.0     # m/km added at D = 1
 
 
+def esal_per_truck_p(gvw_t, exponent: float):
+    """Load equivalency with a chosen exponent (used to test model mismatch; the standard value is 4)."""
+    w = np.asarray(gvw_t, dtype=float) * G
+    return ((AXLE_SHARE[0] * w / REF_SINGLE_KN) ** exponent
+            + (AXLE_SHARE[1] * w / REF_TANDEM_KN) ** exponent
+            + (AXLE_SHARE[2] * w / REF_TANDEM_KN) ** exponent)
+
+
 def esal_per_truck(gvw_t):
     """Equivalent standard axle loads per truck pass (fourth-power law)."""
-    w = np.asarray(gvw_t, dtype=float) * G
-    return ((AXLE_SHARE[0] * w / REF_SINGLE_KN) ** 4
-            + (AXLE_SHARE[1] * w / REF_TANDEM_KN) ** 4
-            + (AXLE_SHARE[2] * w / REF_TANDEM_KN) ** 4)
+    return esal_per_truck_p(gvw_t, 4.0)
 
 
 def temp_factor(t_c):

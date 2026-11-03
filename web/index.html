@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>RouteTwin NG - Lagos-Ibadan corridor twin</title>
 <link rel="stylesheet" href="style.css">
-<script type="importmap">
-{ "imports": { "three": "./vendor/three.module.js" } }
-</script>
 </head>
 <body>
 <header class="bar">
@@ -17,24 +18,23 @@
   <div class="spacer"></div>
   <label class="tokenbox" id="tokenBox" hidden>Operator token <input id="token" type="password" autocomplete="off"></label>
   <button id="btnPause">Pause</button>
-  <select id="speed" aria-label="Simulation speed">
-    <option value="6">1 h per second</option>
-    <option value="36">6 h per second</option>
-    <option value="144">1 day per second</option>
+  <button id="btnStop" hidden>Stop</button>
+  <select id="speed" aria-label="Simulation speed (simulated time per real second)">
+    <option value="1">10 min per second</option><option value="3">30 min per second</option>
+    <option value="6" selected>1 hour per second</option><option value="12">2 hours per second</option>
+    <option value="18">3 hours per second</option><option value="36">6 hours per second</option>
+    <option value="72">12 hours per second</option><option value="144">1 day per second</option>
+    <option value="216">1.5 days per second</option><option value="288">2 days per second</option>
   </select>
   <details class="menu" id="scenMenu">
-    <summary>Scenarios</summary>
-    <div class="menu-body">
-      <button data-scn="overload">Overloaded trucks for 7 days</button>
-      <button data-scn="rain">Heavy rain for 24 h</button>
-      <button data-scn="closure-sel">Close selected segment for 4 h</button>
-      <button data-scn="accident-sel">Accident on selected segment (3 h)</button>
-      <button data-scn="outage-sel">Sensor outage on selected segment</button>
-    </div>
+    <summary id="scenSummary">Scenarios</summary>
+    <div class="menu-body" id="scenBody"></div>
   </details>
 </header>
 
-<div class="banner" id="banner"></div>
+<div class="runbar" id="runbar"></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="setup" aria-labelledby="setupTitle"></dialog>
 
 <main class="grid">
   <aside class="left" aria-label="Segments">
@@ -71,6 +71,8 @@
     <div id="tab-detail" class="pane" hidden></div>
   </aside>
 </main>
-<script type="module" src="app.js"></script>
+<script src="vendor/three.min.js"></script>
+<script src="vendor/OrbitControls.umd.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-import { OrbitControls } from './vendor/OrbitControls.js';
 
 const $ = (s) => document.querySelector(s);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -13,7 +11,8 @@ const segMesh = [], segMid = [], segDir = [], trucks = new Map();
 function setHtml(el, html) { if (el._h !== html) { el._h = html; el.innerHTML = html; } }
 const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(v) ? '-' : Number(v).toFixed(d));
 const sid = (i) => 'S' + String(i + 1).padStart(2, '0');
-function toast(msg) { const b = $('#banner'); b.textContent = msg; b.style.color = '#e3a72f'; setTimeout(setBanner, 5000); }
+let toastTimer = 0;
+function toast(msg) { const b = $('#toast'); b.textContent = msg; b.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { b.hidden = true; }, 5000); }
 async function post(path, body) {
   const h = { 'Content-Type': 'application/json' };
   if (token) h['X-Operator-Token'] = token;
@@ -29,14 +28,43 @@ function condColor(ci) {
 function statusColor(st) { return st === 'red' ? RED : st === 'amber' ? AMBER : st === 'unknown' ? DARK : NEUTRAL; }
 const cls = (ci) => (ci < 45 ? 'red' : ci < 65 ? 'amber' : '');
 
-function setBanner() {
-  const b = $('#banner'); b.style.color = '';
-  if (!cfg) return;
-  b.textContent = ({
-    simulation: 'Simulated data. Traffic, pavement and sensors come from a seeded simulator; estimates are checked against hidden simulator truth, not field measurements.',
-    hybrid: 'Hybrid data. Fleet and pavement are simulated; weather replays a recorded real series.',
-    live: 'Live telemetry ingestion. Values reflect devices posting signed batches to /api/ingest.'
-  })[cfg.mode] + '  Geometry: ' + cfg.geometry_status;
+/* ---------------------------------------------------------------- runs and scenarios */
+const DEFAULT_SCEN = [{ kind: 'rain', label: 'Heavy rain', detail: '24 h at 8 mm/h' }, { kind: 'overload', label: 'Overloaded trucks', detail: '7 days, gross weight +35%' },
+  { kind: 'closure', label: 'Road closure', detail: '4 h, selected segment', segment: true }, { kind: 'accident', label: 'Accident', detail: '3 h, selected segment', segment: true }, { kind: 'sensor_outage', label: 'Sensor outage', detail: 'selected segment', segment: true }];
+const catalog = () => cfg.scenarios || DEFAULT_SCEN;
+const SEGKIND = ['closure', 'accident', 'sensor_outage'];
+function scenBody(kind, seg) {
+  if (cfg.runs) return SEGKIND.includes(kind) ? { kind, segment_id: seg } : { kind };
+  return { rain: { kind, hours: 24, intensity: 8 }, overload: { kind, mult: 1.35, days: 7 }, closure: { kind, segment_id: seg, hours: 4 }, accident: { kind, segment_id: seg, hours: 3 }, sensor_outage: { kind, segment_id: seg, ticks: 60 } }[kind];
+}
+function renderScenMenu() {
+  const act = (state.run && state.run.scenarios) || [], max = cfg.max_scenarios || 99, full = act.length >= max;
+  $('#scenSummary').textContent = cfg.runs ? `Scenarios ${act.length} of ${max}` : 'Scenarios';
+  setHtml($('#scenBody'), catalog().map((c) => `<button class="scen-item" data-kind="${c.kind}" ${full || act.some((a) => a.kind === c.kind) ? 'disabled' : ''}>${c.label}<small>${c.detail}${c.segment ? ' (uses the selected segment)' : ''}</small></button>`).join('') +
+    (full ? `<small>A maximum of ${max} scenarios can be active at once.</small>` : ''));
+}
+function renderRunbar() {
+  if (!cfg.runs || !state.run) { $('#runbar').textContent = ''; return; }
+  const r = state.run, t = (h) => (h >= 48 ? (h / 24).toFixed(1) + ' d' : Math.max(1, Math.round(h)) + ' h');
+  $('#runbar').innerHTML = `Run <b title="Enter this seed when starting a simulation to repeat this run">${r.seed}</b>` + (state.control.paused ? ' <span class="paused">PAUSED</span>' : '') + ' · ' +
+    (r.scenarios.length ? `Scenarios ${r.scenarios.length} of ${r.max}: ` + r.scenarios.map((s) => `<b>${s.label}</b> (${t(s.remaining_h)} left)`).join(', ') : 'No scenario active');
+}
+function openSetup() {
+  const dlg = $('#setup'); if (dlg.open) return;
+  const seg = '<option value="random">Random segment</option>' + cfg.segments.map((s) => `<option value="${s.id}">${sid(s.id)}</option>`).join('');
+  dlg.innerHTML = `<form id="setupForm"><h2 id="setupTitle">Start a simulation</h2>
+    <p class="note">Choose up to three scenarios to run together, or none for a normal-conditions run. Each run starts from a new random road: different worn sections and potholes.</p>
+    <fieldset><legend class="sr">Scenarios</legend>${catalog().map((c) => `<label class="scn"><input type="checkbox" name="scn" value="${c.kind}"><span><b>${c.label}</b><small>${c.detail}</small></span>${c.segment ? `<select data-for="${c.kind}" aria-label="${c.label}: segment">${seg}</select>` : '<span></span>'}</label>`).join('')}</fieldset>
+    <p class="note" id="scnCount" aria-live="polite">0 of ${cfg.max_scenarios} selected</p>
+    <label class="seedrow">Seed (optional) <input id="seedIn" inputmode="numeric" placeholder="random"></label>
+    <div class="btnrow"><button type="submit" class="primary">Start simulation</button></div></form>`;
+  const boxes = [...dlg.querySelectorAll('input[name=scn]')];
+  boxes.forEach((b) => b.onchange = () => { const n = boxes.filter((x) => x.checked).length; boxes.forEach((x) => { x.disabled = !x.checked && n >= cfg.max_scenarios; }); $('#scnCount').textContent = `${n} of ${cfg.max_scenarios} selected` + (n >= cfg.max_scenarios ? ' (maximum)' : ''); });
+  dlg.oncancel = (e) => e.preventDefault();
+  $('#setupForm').onsubmit = async (e) => { e.preventDefault();
+    const scenarios = boxes.filter((x) => x.checked).map((x) => { const s = dlg.querySelector(`select[data-for=${x.value}]`); return scenBody(x.value, s ? s.value : undefined); });
+    if (await post('/api/run/start', { seed: $('#seedIn').value.trim(), scenarios })) { dlg.close(); state = null; } };
+  dlg.showModal();
 }
 
 /* ---------------------------------------------------------------- 3D scene */
@@ -123,7 +151,7 @@ function select(i, fly) {
 }
 
 function updateScene(t) {
-  if (!state) return;
+  if (!state || !state.segments) return;
   state.segments.forEach((s, i) => {
     const m = segMesh[i];
     const col = layer === 'cond' ? condColor(s.ci) : statusColor(s.status);
@@ -188,7 +216,7 @@ function animate(t) {
 
 /* ---------------------------------------------------------------- panels */
 function renderList() {
-  if (!state) return;
+  if (!state || !state.segments) return;
   const box = $('#segList');
   if (box.children.length !== state.segments.length) {
     box.innerHTML = state.segments.map((s) => `<button class="segrow" data-id="${s.id}" title="${s.name}">
@@ -247,7 +275,7 @@ function renderMaint() {
 
 let detailFor = -1;
 function renderDetail() {
-  if (!state) return;
+  if (!state || !state.segments) return;
   const s = state.segments[selected];
   if (detailFor !== selected || !$('#dRows')) {
     detailFor = selected;
@@ -266,7 +294,7 @@ function renderDetail() {
     ${row('Remaining life to CI 45', s.rul_days === null ? 'not yet estimated' : fmt(s.rul_days, 0) + ' days')}
     ${row('Load-response multiplier', `${fmt(s.theta, 2)} ± ${fmt(s.theta_sd, 2)}`)}
     ${row('Speed outbound / inbound', `${fmt(s.speed[0], 0)} / ${fmt(s.speed[1], 0)} km/h`)}
-    ${row('Flow outbound / inbound', `${fmt(s.flow_vph[0], 0)} / ${fmt(s.flow_vph[1], 0)} veh/h`)}
+    ${row('Flow per direction, outbound / inbound', `${fmt(s.flow_vph[0], 0)} / ${fmt(s.flow_vph[1], 0)} veh/h`)}
     ${row('ESAL per truck (WIM)', fmt(s.esal_per_truck, 2))}
     ${row('Pavement temperature', fmt(s.pav_temp, 1) + ' °C')}
     ${row('Confirmed potholes', s.potholes.length ? s.potholes.map((p) => `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}`).join('<br>') : 'none')}
@@ -279,6 +307,7 @@ function renderDetail() {
 
 let hist = null;
 async function loadHistory() {
+  if (!state || !state.segments) return;
   try { hist = await (await fetch(`/api/segment/${selected}/history`)).json(); drawChart(); } catch (e) {}
 }
 function drawChart() {
@@ -312,11 +341,14 @@ function renderKey() {
 
 function render() {
   if (!state) return;
+  if (state.stopped) { $('#runbar').textContent = 'No simulation running'; $('#btnStop').hidden = true; openSetup(); return; }
+  if (!state.segments) return;
+  if ($('#btnStop').hidden && cfg.runs) $('#btnStop').hidden = false;
   $('#clock').textContent = `Day ${Math.floor(state.clock.day) + 1}, ${String(Math.floor(state.clock.hour)).padStart(2, '0')}:${String(Math.floor((state.clock.hour % 1) * 60)).padStart(2, '0')}` +
     (state.weather.rain_mm_h > 0.1 ? `  |  rain ${fmt(state.weather.rain_mm_h, 1)} mm/h` : '') + (state.weather.air_temp_c ? `  |  ${fmt(state.weather.air_temp_c, 0)} °C` : '');
   $('#btnPause').textContent = state.control.paused ? 'Run' : 'Pause';
   if (document.activeElement !== $('#speed')) $('#speed').value = String(state.control.speed);
-  renderKpis(); renderList(); renderAlarms(); renderAdvisories(); renderMaint();
+  renderRunbar(); renderScenMenu(); renderKpis(); renderList(); renderAlarms(); renderAdvisories(); renderMaint();
   if (!document.querySelector('#tab-detail').hidden) renderDetail();
 }
 
@@ -343,15 +375,9 @@ $('#resetView').onclick = () => { focus = { target: home.target.clone(), pos: ho
 $('#truthToggle').onchange = (e) => { showTruth = e.target.checked; renderDetail(); };
 $('#token').oninput = (e) => { token = e.target.value; };
 $('#btnPause').onclick = () => post('/api/control', { paused: !state.control.paused });
+$('#btnStop').onclick = () => { if (confirm('Stop this simulation and discard its state? You can start a new one afterwards.')) post('/api/run/stop'); };
+$('#scenBody').addEventListener('click', (e) => { const b = e.target.closest('.scen-item'); if (!b || b.disabled) return; $('#scenMenu').open = false; post('/api/scenario', scenBody(b.dataset.kind, selected)); });
 $('#speed').onchange = (e) => post('/api/control', { speed: +e.target.value });
-document.querySelectorAll('[data-scn]').forEach((b) => b.onclick = async () => {
-  const k = b.dataset.scn; $('#scenMenu').open = false;
-  if (k === 'overload') await post('/api/scenario', { kind: 'overload', mult: 1.35, days: 7 });
-  else if (k === 'rain') await post('/api/scenario', { kind: 'rain', hours: 24, intensity: 8 });
-  else if (k === 'closure-sel') await post('/api/scenario', { kind: 'closure', segment_id: selected, hours: 4 });
-  else if (k === 'accident-sel') await post('/api/scenario', { kind: 'accident', segment_id: selected, hours: 3 });
-  else if (k === 'outage-sel') await post('/api/scenario', { kind: 'sensor_outage', segment_id: selected, ticks: 60 });
-});
 setInterval(() => { if (!$('#tab-detail').hidden) loadHistory(); }, 5000);
 
 function connect() {
@@ -366,6 +392,7 @@ function connect() {
   if (cfg.mode !== 'simulation') $('#tokenBox').hidden = false;
   if (cfg.has_truth) $('#truthRow').hidden = false;
   if (cfg.mode === 'live') { $('#btnPause').hidden = true; $('#speed').hidden = true; }
-  setBanner(); renderKey(); buildScene(); select(0, false); setTab('alarms');
+  const mx = cfg.max_speed || 720; document.querySelectorAll('#speed option').forEach((o) => { o.disabled = +o.value > mx; });
+  renderKey(); buildScene(); select(0, false); setTab('alarms');
   requestAnimationFrame(animate); connect();
 })();

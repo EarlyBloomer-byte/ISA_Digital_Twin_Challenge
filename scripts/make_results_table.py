@@ -42,3 +42,16 @@ md += ["", "All policies except None get the same budget: 12 units per 30 days, 
        "Variability across seeds has not been characterised beyond the range column. Field evidence: none."]
 (ROOT / "docs" / "results.md").write_text("\n".join(md) + "\n")
 print("\n".join(md))
+
+
+# ---- estimator validation table (scripts/validate_estimator.py)
+vp = ROOT / "data" / "simulated" / "estimator_validation.csv"
+if vp.exists():
+    vr = list(csv.DictReader(vp.open()))
+    t = ["\\begin{tabular}{lrrrr}", "\\toprule", "Case & CI MAE & CI bias & Truth within 2 SD & Mean NIS\\\\", "\\midrule"]
+    for case, label in (("matched", "Matched truth"), ("mismatched", "Mismatched truth")):
+        r = [x for x in vr if x["case"] == case]
+        m = lambda k: statistics.mean(float(x[k]) for x in r)
+        t.append(f"{label} & {m('ci_mae'):.2f} & {m('ci_bias'):+.2f} & {100 * m('coverage_2sd'):.0f}\\% & {m('mean_nis'):.2f}\\\\")
+    t += ["\\bottomrule", "\\end{tabular}"]
+    (ROOT / "docs" / "proposal" / "validation_table.tex").write_text("\n".join(t) + "\n")

@@ -84,4 +84,3 @@ the seeded default simulator, not the randomised dashboard runs.
 * All constants are illustrative placeholders; corridor waypoints are approximate (`make osm` rebuilds them from OpenStreetMap).
 * The IRI implementation omits the 250 mm moving-average pre-filter.
 * The weather-recording and OpenStreetMap scripts were written to the public API descriptions but not run live.
-* The dashboard was checked in headless Chromium with software rendering, not on a physical GPU.

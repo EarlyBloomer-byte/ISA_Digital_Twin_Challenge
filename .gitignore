@@ -45,3 +45,5 @@ Thumbs.db
 node_modules/
 
 *.sqlite3-journal
+
+docs/proposal
